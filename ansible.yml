@@ -1,210 +1,321 @@
 ---
-- hosts: linux
+- hosts: soc
   gather_facts: no
   
   vars:
 
-    config_name: "{{ config }}"
+    var1: "{{ vm }}"
 
   tasks:
 
-    - name: Create Logstash Pipeline File
-      become: yes
-      file:
-         path: /etc/logstash/conf.d/nessusx{{ config_name }}.conf
-         state: touch
+    - name: Create Directory with VMs
+      ansible.builtin.file:
+        path: /etc/terraform/{{ var1 }}
+        state: directory
+        mode: '0755'
+     
     
-    - name: Create nessus.ini File
+    - name: Create terraform File
       become: yes
       file:
-         path: /opt/vulnwhispermnt/VulnWhisperer/configs/nessusx{{ config_name }}.ini
+         path: /etc/terraform/{{ var1 }}/main.tf
          state: touch
          mode: "755"
     
-    - name: Configure nessus.ini File
+    - name: Create terraform variable Files
+      become: yes
+      file:
+         path: /etc/terraform/{{ var1 }}/terraform.tfvars
+         state: touch
+         mode: "755"
+         
+    - name: Create variable Files
+      become: yes
+      file:
+         path: /etc/terraform/{{ var1 }}/variables.tf
+         state: touch
+         mode: "755"
+         
+         
+    - name: Configure terraform.tf File
       become: yes
       blockinfile:
-         path: /opt/vulnwhispermnt/VulnWhisperer/configs/nessusx{{ config_name }}.ini
+         path: /etc/terraform/{{ var1 }}/main.tf
          marker: ""
          block: | 
-            [nessus]
-            enabled=true
-            hostname=172.16.100.120
-            port=8834
-            access_key=
-            secret_key=
-            username=socadmin 
-            password=Redshift@dmin2020!
-            write_path=/opt/vulnwhispermnt/VulnWhisperer/data/nessus/nessusx{{ config_name }}/
-            db_path=/opt/vulnwhispermnt/VulnWhisperer/data/database/nessusx{{ config_name }}/
-            trash=false
-            verbose=true
+             
+            ##### Terraform Initialization
+            terraform {
+              required_version = ">= 0.13"
 
+              required_providers {
+                vsphere = {
+                  source  = "hashicorp/vsphere"
+                  version = "1.24.3"
+                }
+              }
+            }
 
-    - name: Add Logstash Pipeline Configuration
+            ##### Provider
+            provider "vsphere" {
+              user           = var.provider_vsphere_user
+              password       = var.provider_vsphere_password
+              vsphere_server = var.provider_vsphere_host
+
+            # if you have a self-signed cert
+            allow_unverified_ssl = true
+            }
+
+            ##### Data sources
+            data "vsphere_datacenter" "target_dc" {
+              name = var.deploy_vsphere_datacenter
+            }
+
+            data "vsphere_datastore" "target_datastore" {
+               name          = var.deploy_vsphere_datastore
+               datacenter_id = data.vsphere_datacenter.target_dc.id
+            }
+
+            data "vsphere_compute_cluster" "target_cluster" {
+               name          = var.deploy_vsphere_cluster
+               datacenter_id = data.vsphere_datacenter.target_dc.id
+            }
+
+            data "vsphere_network" "target_network" {
+               name          = var.deploy_vsphere_network
+               datacenter_id = data.vsphere_datacenter.target_dc.id
+            }
+
+            data "vsphere_virtual_machine" "source_template" {
+               name          = var.guest_template
+               datacenter_id = data.vsphere_datacenter.target_dc.id
+            }
+
+             ##### Resources
+             # Clones a single Linux VM from a template
+            resource "vsphere_virtual_machine" "kubernetes_master" {
+              count            = length(var.master_ips)
+              name             = "${var.guest_name_prefix}-master0${count.index + 1}"
+              resource_pool_id = data.vsphere_compute_cluster.target_cluster.resource_pool_id
+              datastore_id     = data.vsphere_datastore.target_datastore.id
+              folder           = var.deploy_vsphere_folder
+
+               
+              num_cpus = var.guest_vcpu
+              memory   = var.guest_memory
+              guest_id = data.vsphere_virtual_machine.source_template.guest_id
+
+              scsi_type = data.vsphere_virtual_machine.source_template.scsi_type
+
+              network_interface {
+                network_id   = data.vsphere_network.target_network.id
+                adapter_type = data.vsphere_virtual_machine.source_template.network_interface_types[0]
+              }
+
+              disk {
+                label            = "disk0"
+                size             = data.vsphere_virtual_machine.source_template.disks[0].size
+                eagerly_scrub    = data.vsphere_virtual_machine.source_template.disks[0].eagerly_scrub
+                thin_provisioned = data.vsphere_virtual_machine.source_template.disks[0].thin_provisioned
+              }
+
+              clone {
+                template_uuid = data.vsphere_virtual_machine.source_template.id
+
+                customize {
+                  linux_options {
+                    host_name = "${var.guest_name_prefix}-master0${count.index + 1}"
+                    domain    = var.guest_domain
+                  }
+
+                  network_interface {
+                    ipv4_address = lookup(var.master_ips, count.index)
+                    ipv4_netmask = var.guest_ipv4_netmask
+                  }
+
+                  ipv4_gateway    = var.guest_ipv4_gateway
+                  dns_server_list = [var.guest_dns_servers]
+                  dns_suffix_list = [var.guest_dns_suffix]
+                }
+              }
+            }
+           
+    - name: Create terraform variable files
       become: yes
       blockinfile:
-         path: /etc/logstash/conf.d/nessusx{{ config_name }}.conf
+         path: /etc/terraform/{{ var1 }}/terraform.tfvars
          marker: ""
-         block: |
-            input {
-              file {
-                path => "/opt/vulnwhispermnt/VulnWhisperer/data/nessus/nessusx{{ config_name }}/*"
-                mode => "read"
-                start_position => "beginning"
-                file_completed_action => "delete"
-                tags => "nessus"
-              }
+         block: | 
+            # Provider
+            provider_vsphere_host     = "vcsa01-z67.sddc.lab"
+            provider_vsphere_user     = "administrator@vsphere.local"
+            provider_vsphere_password = "VMware1!"
+
+            # Infrastructure
+            deploy_vsphere_datacenter = "MGMT-Z67"
+            deploy_vsphere_cluster    = "CL01-Z67"
+            deploy_vsphere_datastore  = "vsanDatastore"
+            deploy_vsphere_folder     = "/kubernetes"
+            deploy_vsphere_network    = "PG-10.67.11.0"
+
+            # Guest
+            guest_name_prefix     = "k8s-prod"
+            guest_template        = "packer-ubuntu-18.04"
+            guest_vcpu            = "1"
+            guest_memory          = "1024"
+            guest_ipv4_netmask    = "24"
+            guest_ipv4_gateway    = "10.67.11.254"
+            guest_dns_servers     = "10.67.10.5"
+            guest_dns_suffix      = "sddc.lab"
+            guest_domain          = "sddc.lab"
+            guest_ssh_user        = "packer"
+            guest_ssh_password    = "VMware1!"
+            guest_ssh_key_private = "~/.ssh/id_ed25519"
+            guest_ssh_key_public  = "~/.ssh/id_ed25519.pub"
+
+            #Master(s)
+            #master_ips = {
+              #"0" = "10.67.11.11"
+              #"1" = "10.67.11.12"
+              #"2" = "10.67.11.13"
+            #}
+
+            # Worker(s)
+            #worker_ips = {
+              #"0" = "10.67.11.21"
+              #"1" = "10.67.11.22"
+              # "2" = "10.67.11.23"
+              #"3" = "10.67.11.24"
+            #}
+
+
+    - name: Create variable files
+      become: yes
+      blockinfile:
+         path: /etc/terraform/{{ var1 }}/variables.tfvars
+         marker: ""
+         block: | 
+            ##### Provider
+            # - Arguments to configure the VMware vSphere Provider
+
+            variable "provider_vsphere_host" {
+            description = "vCenter server FQDN or IP - Example: vcsa01-z67.sddc.lab"
             }
-            filter {
-              if "nessusx{{ config_name }}" in [tags] or "tenable" in [tags] {
-                # Drop the header column
-                if [message] =~ "^Plugin ID" { drop {} }
-                csv {
-                  # columns => ["plugin_id", "cve", "cvss", "risk", "asset", "protocol", "port", "plugin_name", "synopsis", "description", "solution", "see_also", "plugin_output"]
-                  columns => ["plugin_id", "cve", "cvss", "risk", "asset", "protocol", "port", "plugin_name", "synopsis", "description", "solution", "see_also", "plugin_output", "asset_uuid", 
-            "vulnerability_state", "ip", "fqdn", "netbios", "operating_system", "mac_address", "plugin_family", "cvss_base", "cvss_temporal", "cvss_temporal_vector", "cvss_vector", "cvss3_base", 
-            "cvss3_temporal", "cvss3_temporal_vector", "cvss3_vector", "system_type", "host_start", "host_end"]
-                  separator => ","
-                  source => "message"
-                }
-                ruby {
-                    code => "if event.get('description')
-                                event.set('description', event.get('description').gsub(92.chr + 'n', 10.chr).gsub(92.chr + 'r', 13.chr))
-                            end
-                             if event.get('synopsis')
-                                event.set('synopsis', event.get('synopsis').gsub(92.chr + 'n', 10.chr).gsub(92.chr + 'r', 13.chr))
-                            end
-                             if event.get('solution')
-                                event.set('solution', event.get('solution').gsub(92.chr + 'n', 10.chr).gsub(92.chr + 'r', 13.chr))
-                            end
-                             if event.get('see_also')
-                                event.set('see_also', event.get('see_also').gsub(92.chr + 'n', 10.chr).gsub(92.chr + 'r', 13.chr))
-                            end
-                             if event.get('plugin_output')
-                                event.set('plugin_output', event.get('plugin_output').gsub(92.chr + 'n', 10.chr).gsub(92.chr + 'r', 13.chr))
-                            end"
-                }
-                #If using filebeats as your source, you will need to replace the "path" field to "source"
-                # Remove when scan name is included in event (current method is error prone)
-                grok {
-                  match => { "path" => "(?<scan_name>[a-zA-Z0-9_.\-]+)_%{INT:scan_id}_%{INT:history_id}_%{INT:last_updated}.csv$" }
-                  tag_on_failure => []
-                }
-                # TODO remove when @timestamp is included in event
-                date {
-                  match => [ "last_updated", "UNIX" ]
-                  target => "@timestamp"
-                  remove_field => ["last_updated"]
-                }
-                if [risk] == "None" {
-                  mutate { add_field => { "risk_number" => 0 }}
-                }
-                if [risk] == "Low" {
-                  mutate { add_field => { "risk_number" => 1 }}
-                }
-                if [risk] == "Medium" {
-                  mutate { add_field => { "risk_number" => 2 }}
-                }
-                if [risk] == "High" {
-                  mutate { add_field => { "risk_number" => 3 }}
-                }
-                if [risk] == "Critical" {
-                  mutate { add_field => { "risk_number" => 4 }}
-                }
-                if ![cve] or [cve] == "nan" {
-                  mutate { remove_field => [ "cve" ] }
-                }
-                if ![cvss] or [cvss] == "nan" {
-                  mutate { remove_field => [ "cvss" ] }
-                }
-                if ![cvss_base] or [cvss_base] == "nan" {
-                  mutate { remove_field => [ "cvss_base" ] }
-                }
-                if ![cvss_temporal] or [cvss_temporal] == "nan" {
-                  mutate { remove_field => [ "cvss_temporal" ] }
-                }
-                if ![cvss_temporal_vector] or [cvss_temporal_vector] == "nan" {
-                  mutate { remove_field => [ "cvss_temporal_vector" ] }
-                }
-                if ![cvss_vector] or [cvss_vector] == "nan" {
-                  mutate { remove_field => [ "cvss_vector" ] }
-                }
-                if ![cvss3_base] or [cvss3_base] == "nan" {
-                  mutate { remove_field => [ "cvss3_base" ] }
-                }
-                if ![cvss3_temporal] or [cvss3_temporal] == "nan" {
-                  mutate { remove_field => [ "cvss3_temporal" ] }
-                }
-                if ![cvss3_temporal_vector] or [cvss3_temporal_vector] == "nan" {
-                  mutate { remove_field => [ "cvss3_temporal_vector" ] }
-                }
-                if ![description] or [description] == "nan" {
-                  mutate { remove_field => [ "description" ] }
-                }
-                if ![mac_address] or [mac_address] == "nan" {
-                  mutate { remove_field => [ "mac_address" ] }
-                }
-                if ![netbios] or [netbios] == "nan" {
-                  mutate { remove_field => [ "netbios" ] }
-                }
-                if ![operating_system] or [operating_system] == "nan" {
-                  mutate { remove_field => [ "operating_system" ] }
-                }
-                if ![plugin_output] or [plugin_output] == "nan" {
-                  mutate { remove_field => [ "plugin_output" ] }
-                }
-                if ![see_also] or [see_also] == "nan" {
-                  mutate { remove_field => [ "see_also" ] }
-                }
-                if ![synopsis] or [synopsis] == "nan" {
-                  mutate { remove_field => [ "synopsis" ] }
-                }
-                if ![system_type] or [system_type] == "nan" {
-                  mutate { remove_field => [ "system_type" ] }
-                }
-                mutate {
-                  remove_field => [ "message" ]
-                  add_field => { "risk_score" => "%{cvss}" }
-                }
-                mutate {
-                  convert => { "risk_score" => "float" }
-                }
-                if [risk_score] == 0 {
-                  mutate {
-                    add_field => { "risk_score_name" => "info" }
-                  }
-                }
-                if [risk_score] > 0 and [risk_score] < 3 {
-                  mutate {
-                    add_field => { "risk_score_name" => "low" }
-                  }
-                }
-                if [risk_score] >= 3 and [risk_score] < 6 {
-                  mutate {
-                    add_field => { "risk_score_name" => "medium" }
-                  }
-                }
-                if [risk_score] >=6 and [risk_score] < 9 {
-                  mutate {
-                    add_field => { "risk_score_name" => "high" }
-                  }
-                }
-                if [risk_score] >= 9 {
-                  mutate {
-                    add_field => { "risk_score_name" => "critical" }
-                  }
-                }
-              }
+
+            variable "provider_vsphere_user" {
+            description = "vSphere username to use to connect to the environment - Default: administrator@vsphere.local"
+            default     = "administrator@vsphere.local"
             }
-            output {
-              if "nessusx{{ config_name }}" in [tags] or "tenable" in [tags]{
-                stdout {
-                  codec => dots
-                }
-                elasticsearch {
-                  hosts => [ "elasticsearch:9200" ]
-                  index => "logstash-vulnwhisperer-{{ config_name }}-%{+YYYY.MM}"
-                }
-              }
+
+            variable "provider_vsphere_password" {
+            description = "vSphere password"
             }
+
+            ##### Infrastructure
+            # - Defines the vCenter / vSphere environment
+
+            variable "deploy_vsphere_datacenter" {
+            description = "vSphere datacenter in which the virtual machine will be deployed."
+            }
+
+            variable "deploy_vsphere_cluster" {
+            description = "vSphere cluster in which the virtual machine will be deployed."
+            }
+
+            variable "deploy_vsphere_datastore" {
+            description = "Datastore in which the virtual machine will be deployed."
+            }
+
+            variable "deploy_vsphere_folder" {
+            description = "The path to the folder to put this virtual machine in, relative to the datacenter that the resource pool is in."
+            }
+
+            variable "deploy_vsphere_network" {
+            description = "Porgroup to which the virtual machine will be connected."
+            }
+
+            ##### Guest
+            # - Describes virtual machine / guest options
+
+            variable "guest_name_prefix" {
+            description = "VM / hostname prefix for the kubernetes cluster."
+            }
+
+            variable "guest_template" {
+            description = "The source virtual machine or template to clone from."
+            }
+
+            variable "guest_vcpu" {
+            description = "The number of virtual processors to assign to this virtual machine. Default: 1."
+            default     = "1"
+            }
+
+            variable "guest_memory" {
+            description = "The size of the virtual machine's memory, in MB. Default: 1024 (1 GB)."
+            default     = "1024"
+            }
+
+            variable "guest_ipv4_netmask" {
+            description = "The IPv4 subnet mask, in bits (example: 24 for 255.255.255.0)."
+            }
+
+            variable "guest_ipv4_gateway" {
+            description = "The IPv4 default gateway."
+            }
+
+            variable "guest_dns_servers" {
+            description = "The list of DNS servers to configure on the virtual machine."
+            }
+
+            variable "guest_dns_suffix" {
+            description = "A list of DNS search domains to add to the DNS configuration on the virtual machine."
+            }
+
+            variable "guest_domain" {
+            description = "The domain name for this machine."
+            }
+
+            variable "guest_ssh_user" {
+            description = "SSH username to connect to the guest VM."
+            }
+
+            variable "guest_ssh_password" {
+            description = "SSH password to connect to the guest VM."
+            }
+
+            variable "guest_ssh_key_private" {
+            description = "SSH private key (e.g., id_rsa) path."
+            }
+
+            variable "guest_ssh_key_public" {
+            description = "SSH public key (e.g., id_rsa.pub) path."
+            }
+
+            ##### Master(s)
+            # - Describes master(s) nodes options
+
+            variable "master_ips" {
+            type        = map(any)
+            description = "List of IPs used for the kubernetes master nodes. 1 IP for a single master, or 3 for a multi-master configuration."
+            }
+
+            ##### Worker(s)
+            # - Describes workers(s) nodes (a.k.a., minions) options
+
+            variable "worker_ips" {
+            type        = map(any)
+            description = "List of IPs used for the kubernetes worker nodes."
+            }
+
+    - name: Change directory for terraform vm
+      command: cd /etc/terraform/{{ var1 }}
+      register: mymotd
+      
+    - name: Terraform init
+      command: terraform init
+      register: mymotd
+      
+    - name: Terraform Plan  
+      command: terraform plan
+      register: mymotd
+            
