@@ -44,101 +44,101 @@
          marker: ""
          block: | 
              
-            ##### Terraform Initialization
-            terraform {
-              required_version = ">= 0.13"
+             ### Terraform Initialization
+             terraform {
+               required_version = ">= 0.13"
 
-              required_providers {
-                vsphere = {
-                  source  = "hashicorp/vsphere"
-                  version = "1.24.3"
-                }
-              }
-            }
+               required_providers {
+                 vsphere = {
+                   source  = "hashicorp/vsphere"
+                   version = "1.24.3"
+                 }
+               }
+             }
 
-            ##### Provider
-            provider "vsphere" {
-              user           = var.provider_vsphere_user
-              password       = var.provider_vsphere_password
-              vsphere_server = var.provider_vsphere_host
+             ##### Provider
+             provider "vsphere" {
+               user           = var.provider_vsphere_user
+               password       = var.provider_vsphere_password
+               vsphere_server = var.provider_vsphere_host
 
-            # if you have a self-signed cert
-            allow_unverified_ssl = true
-            }
+             # if you have a self-signed cert
+             allow_unverified_ssl = true
+             }
 
-            ##### Data sources
-            data "vsphere_datacenter" "target_dc" {
-              name = var.deploy_vsphere_datacenter
-            }
+             ##### Data sources
+             data "vsphere_datacenter" "target_dc" {
+               name = var.deploy_vsphere_datacenter
+             }
 
-            data "vsphere_datastore" "target_datastore" {
-               name          = var.deploy_vsphere_datastore
-               datacenter_id = data.vsphere_datacenter.target_dc.id
-            }
+             data "vsphere_datastore" "target_datastore" {
+                name          = var.deploy_vsphere_datastore
+                datacenter_id = data.vsphere_datacenter.target_dc.id
+             }
 
-            data "vsphere_compute_cluster" "target_cluster" {
-               name          = var.deploy_vsphere_cluster
-               datacenter_id = data.vsphere_datacenter.target_dc.id
-            }
+             data "vsphere_compute_cluster" "target_cluster" {
+                name          = var.deploy_vsphere_cluster
+                datacenter_id = data.vsphere_datacenter.target_dc.id
+             }
 
-            data "vsphere_network" "target_network" {
-               name          = var.deploy_vsphere_network
-               datacenter_id = data.vsphere_datacenter.target_dc.id
-            }
+             data "vsphere_network" "target_network" {
+                name          = var.deploy_vsphere_network
+                datacenter_id = data.vsphere_datacenter.target_dc.id
+             }
 
-            data "vsphere_virtual_machine" "source_template" {
-               name          = var.guest_template
-               datacenter_id = data.vsphere_datacenter.target_dc.id
-            }
+             data "vsphere_virtual_machine" "source_template" {
+                name          = var.guest_template
+                datacenter_id = data.vsphere_datacenter.target_dc.id
+             }
 
-             ##### Resources
-             # Clones a single Linux VM from a template
-            resource "vsphere_virtual_machine" "kubernetes_master" {
-              count            = length(var.master_ips)
-              name             = "${var.guest_name_prefix}-master0${count.index + 1}"
-              resource_pool_id = data.vsphere_compute_cluster.target_cluster.resource_pool_id
-              datastore_id     = data.vsphere_datastore.target_datastore.id
-              folder           = var.deploy_vsphere_folder
+              ##### Resources
+              # Clones a single Linux VM from a template
+             resource "vsphere_virtual_machine" "kubernetes_master" {
+               count            = length(var.master_ips)
+               name             = "${var.guest_name_prefix}-master0${count.index + 1}"
+               resource_pool_id = data.vsphere_compute_cluster.target_cluster.resource_pool_id
+               datastore_id     = data.vsphere_datastore.target_datastore.id
+               folder           = var.deploy_vsphere_folder
 
                
-              num_cpus = var.guest_vcpu
-              memory   = var.guest_memory
-              guest_id = data.vsphere_virtual_machine.source_template.guest_id
+               num_cpus = var.guest_vcpu
+               memory   = var.guest_memory
+               guest_id = data.vsphere_virtual_machine.source_template.guest_id
 
-              scsi_type = data.vsphere_virtual_machine.source_template.scsi_type
+               scsi_type = data.vsphere_virtual_machine.source_template.scsi_type
 
-              network_interface {
-                network_id   = data.vsphere_network.target_network.id
-                adapter_type = data.vsphere_virtual_machine.source_template.network_interface_types[0]
-              }
+               network_interface {
+                 network_id   = data.vsphere_network.target_network.id
+                 adapter_type = data.vsphere_virtual_machine.source_template.network_interface_types[0]
+               }
 
-              disk {
-                label            = "disk0"
-                size             = data.vsphere_virtual_machine.source_template.disks[0].size
-                eagerly_scrub    = data.vsphere_virtual_machine.source_template.disks[0].eagerly_scrub
-                thin_provisioned = data.vsphere_virtual_machine.source_template.disks[0].thin_provisioned
-              }
+               disk {
+                 label            = "disk0"
+                 size             = data.vsphere_virtual_machine.source_template.disks[0].size
+                 eagerly_scrub    = data.vsphere_virtual_machine.source_template.disks[0].eagerly_scrub
+                 thin_provisioned = data.vsphere_virtual_machine.source_template.disks[0].thin_provisioned
+               }
 
-              clone {
-                template_uuid = data.vsphere_virtual_machine.source_template.id
+               clone {
+                 template_uuid = data.vsphere_virtual_machine.source_template.id
 
-                customize {
-                  linux_options {
+                 customize {
+                   linux_options {
                     host_name = "${var.guest_name_prefix}-master0${count.index + 1}"
                     domain    = var.guest_domain
+                   }
+
+                   network_interface {
+                     ipv4_address = lookup(var.master_ips, count.index)
+                     ipv4_netmask = var.guest_ipv4_netmask
                   }
 
-                  network_interface {
-                    ipv4_address = lookup(var.master_ips, count.index)
-                    ipv4_netmask = var.guest_ipv4_netmask
-                  }
-
-                  ipv4_gateway    = var.guest_ipv4_gateway
-                  dns_server_list = [var.guest_dns_servers]
-                  dns_suffix_list = [var.guest_dns_suffix]
-                }
-              }
-            }
+                   ipv4_gateway    = var.guest_ipv4_gateway
+                   dns_server_list = [var.guest_dns_servers]
+                   dns_suffix_list = [var.guest_dns_suffix]
+                 }
+               }
+             }
            
     - name: Create terraform variable files
       become: yes
@@ -146,47 +146,47 @@
          path: /etc/terraform/{{ var1 }}/terraform.tfvars
          marker: ""
          block: | 
-            # Provider
-            provider_vsphere_host     = "vcsa01-z67.sddc.lab"
-            provider_vsphere_user     = "administrator@vsphere.local"
-            provider_vsphere_password = "VMware1!"
+             # Provider
+             provider_vsphere_host     = "vcsa01-z67.sddc.lab"
+             provider_vsphere_user     = "administrator@vsphere.local"
+             provider_vsphere_password = "VMware1!"
 
-            # Infrastructure
-            deploy_vsphere_datacenter = "MGMT-Z67"
-            deploy_vsphere_cluster    = "CL01-Z67"
-            deploy_vsphere_datastore  = "vsanDatastore"
-            deploy_vsphere_folder     = "/kubernetes"
-            deploy_vsphere_network    = "PG-10.67.11.0"
+             # Infrastructure
+             deploy_vsphere_datacenter = "MGMT-Z67"
+             deploy_vsphere_cluster    = "CL01-Z67"
+             deploy_vsphere_datastore  = "vsanDatastore"
+             deploy_vsphere_folder     = "/kubernetes"
+             deploy_vsphere_network    = "PG-10.67.11.0"
 
-            # Guest
-            guest_name_prefix     = "k8s-prod"
-            guest_template        = "packer-ubuntu-18.04"
-            guest_vcpu            = "1"
-            guest_memory          = "1024"
-            guest_ipv4_netmask    = "24"
-            guest_ipv4_gateway    = "10.67.11.254"
-            guest_dns_servers     = "10.67.10.5"
-            guest_dns_suffix      = "sddc.lab"
-            guest_domain          = "sddc.lab"
-            guest_ssh_user        = "packer"
-            guest_ssh_password    = "VMware1!"
-            guest_ssh_key_private = "~/.ssh/id_ed25519"
-            guest_ssh_key_public  = "~/.ssh/id_ed25519.pub"
+             # Guest
+             guest_name_prefix     = "k8s-prod"
+             guest_template        = "packer-ubuntu-18.04"
+             guest_vcpu            = "1"
+             guest_memory          = "1024"
+             guest_ipv4_netmask    = "24"
+             guest_ipv4_gateway    = "10.67.11.254"
+             guest_dns_servers     = "10.67.10.5"
+             guest_dns_suffix      = "sddc.lab"
+             guest_domain          = "sddc.lab"
+             guest_ssh_user        = "packer"
+             guest_ssh_password    = "VMware1!"
+             guest_ssh_key_private = "~/.ssh/id_ed25519"
+             guest_ssh_key_public  = "~/.ssh/id_ed25519.pub"
 
-            #Master(s)
-            #master_ips = {
-              #"0" = "10.67.11.11"
-              #"1" = "10.67.11.12"
-              #"2" = "10.67.11.13"
-            #}
+             #Master(s)
+             #master_ips = {
+               #"0" = "10.67.11.11"
+               #"1" = "10.67.11.12"
+               #"2" = "10.67.11.13"
+             #}
 
-            # Worker(s)
-            #worker_ips = {
-              #"0" = "10.67.11.21"
-              #"1" = "10.67.11.22"
-              # "2" = "10.67.11.23"
-              #"3" = "10.67.11.24"
-            #}
+             # Worker(s)
+             #worker_ips = {
+               #"0" = "10.67.11.21"
+               #"1" = "10.67.11.22"
+               # "2" = "10.67.11.23"
+               #"3" = "10.67.11.24"
+             #} 
 
 
     - name: Create variable files
@@ -195,117 +195,117 @@
          path: /etc/terraform/{{ var1 }}/variables.tfvars
          marker: ""
          block: | 
-            ##### Provider
-            # - Arguments to configure the VMware vSphere Provider
+             ##### Provider
+             # - Arguments to configure the VMware vSphere Provider
 
-            variable "provider_vsphere_host" {
-            description = "vCenter server FQDN or IP - Example: vcsa01-z67.sddc.lab"
-            }
+             variable "provider_vsphere_host" {
+             description = "vCenter server FQDN or IP - Example: vcsa01-z67.sddc.lab"
+             }
 
-            variable "provider_vsphere_user" {
-            description = "vSphere username to use to connect to the environment - Default: administrator@vsphere.local"
-            default     = "administrator@vsphere.local"
-            }
+             variable "provider_vsphere_user" {
+             description = "vSphere username to use to connect to the environment - Default: administrator@vsphere.local"
+             default     = "administrator@vsphere.local"
+             }
 
-            variable "provider_vsphere_password" {
-            description = "vSphere password"
-            }
+             variable "provider_vsphere_password" {
+             description = "vSphere password"
+             }
 
-            ##### Infrastructure
-            # - Defines the vCenter / vSphere environment
+             ##### Infrastructure
+             # - Defines the vCenter / vSphere environment
 
-            variable "deploy_vsphere_datacenter" {
-            description = "vSphere datacenter in which the virtual machine will be deployed."
-            }
+             variable "deploy_vsphere_datacenter" {
+             description = "vSphere datacenter in which the virtual machine will be deployed."
+             }
 
-            variable "deploy_vsphere_cluster" {
-            description = "vSphere cluster in which the virtual machine will be deployed."
-            }
+             variable "deploy_vsphere_cluster" {
+             description = "vSphere cluster in which the virtual machine will be deployed."
+             }
 
-            variable "deploy_vsphere_datastore" {
-            description = "Datastore in which the virtual machine will be deployed."
-            }
+             variable "deploy_vsphere_datastore" {
+             description = "Datastore in which the virtual machine will be deployed."
+             }
 
-            variable "deploy_vsphere_folder" {
-            description = "The path to the folder to put this virtual machine in, relative to the datacenter that the resource pool is in."
-            }
+             variable "deploy_vsphere_folder" {
+             description = "The path to the folder to put this virtual machine in, relative to the datacenter that the resource pool is in."
+             }
 
-            variable "deploy_vsphere_network" {
-            description = "Porgroup to which the virtual machine will be connected."
-            }
+             variable "deploy_vsphere_network" {
+             description = "Porgroup to which the virtual machine will be connected."
+             }
 
-            ##### Guest
-            # - Describes virtual machine / guest options
+             ##### Guest
+             # - Describes virtual machine / guest options
 
-            variable "guest_name_prefix" {
-            description = "VM / hostname prefix for the kubernetes cluster."
-            }
+             variable "guest_name_prefix" {
+             description = "VM / hostname prefix for the kubernetes cluster."
+             }
 
-            variable "guest_template" {
-            description = "The source virtual machine or template to clone from."
-            }
+             variable "guest_template" {
+             description = "The source virtual machine or template to clone from."
+             }
 
-            variable "guest_vcpu" {
-            description = "The number of virtual processors to assign to this virtual machine. Default: 1."
-            default     = "1"
-            }
+             variable "guest_vcpu" {
+             description = "The number of virtual processors to assign to this virtual machine. Default: 1."
+             default     = "1"
+             }
 
-            variable "guest_memory" {
-            description = "The size of the virtual machine's memory, in MB. Default: 1024 (1 GB)."
-            default     = "1024"
-            }
+             variable "guest_memory" {
+             description = "The size of the virtual machines memory, in MB. Default: 1024 (1 GB)."
+             default     = "1024"
+             }
 
-            variable "guest_ipv4_netmask" {
-            description = "The IPv4 subnet mask, in bits (example: 24 for 255.255.255.0)."
-            }
+             variable "guest_ipv4_netmask" {
+             description = "The IPv4 subnet mask, in bits (example: 24 for 255.255.255.0)."
+             }
 
-            variable "guest_ipv4_gateway" {
-            description = "The IPv4 default gateway."
-            }
+             variable "guest_ipv4_gateway" {
+             description = "The IPv4 default gateway."
+             }
 
-            variable "guest_dns_servers" {
-            description = "The list of DNS servers to configure on the virtual machine."
-            }
+             variable "guest_dns_servers" {
+             description = "The list of DNS servers to configure on the virtual machine."
+             }
 
-            variable "guest_dns_suffix" {
-            description = "A list of DNS search domains to add to the DNS configuration on the virtual machine."
-            }
+             variable "guest_dns_suffix" {
+             description = "A list of DNS search domains to add to the DNS configuration on the virtual machine."
+             }
 
-            variable "guest_domain" {
-            description = "The domain name for this machine."
-            }
+             variable "guest_domain" {
+             description = "The domain name for this machine."
+             }
 
-            variable "guest_ssh_user" {
-            description = "SSH username to connect to the guest VM."
-            }
+             variable "guest_ssh_user" {
+             description = "SSH username to connect to the guest VM."
+              }
 
-            variable "guest_ssh_password" {
-            description = "SSH password to connect to the guest VM."
-            }
+             variable "guest_ssh_password" {
+             description = "SSH password to connect to the guest VM."
+             }
 
-            variable "guest_ssh_key_private" {
-            description = "SSH private key (e.g., id_rsa) path."
-            }
+             variable "guest_ssh_key_private" {
+             description = "SSH private key (e.g., id_rsa) path."
+             }
 
-            variable "guest_ssh_key_public" {
-            description = "SSH public key (e.g., id_rsa.pub) path."
-            }
+             variable "guest_ssh_key_public" {
+             description = "SSH public key (e.g., id_rsa.pub) path."
+             }
 
-            ##### Master(s)
-            # - Describes master(s) nodes options
+             ##### Master(s)
+             # - Describes master(s) nodes options
 
-            variable "master_ips" {
-            type        = map(any)
-            description = "List of IPs used for the kubernetes master nodes. 1 IP for a single master, or 3 for a multi-master configuration."
-            }
+             variable "master_ips" {
+             type        = map(any)
+             description = "List of IPs used for the kubernetes master nodes. 1 IP for a single master, or 3 for a multi-master configuration."
+             }
 
-            ##### Worker(s)
-            # - Describes workers(s) nodes (a.k.a., minions) options
+             ##### Worker(s)
+             # - Describes workers(s) nodes (a.k.a., minions) options
 
-            variable "worker_ips" {
-            type        = map(any)
-            description = "List of IPs used for the kubernetes worker nodes."
-            }
+             variable "worker_ips" {
+             type        = map(any)
+             description = "List of IPs used for the kubernetes worker nodes."
+             }
 
     - name: Change directory for terraform vm
       command: cd /etc/terraform/{{ var1 }}
